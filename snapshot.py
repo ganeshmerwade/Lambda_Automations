@@ -1,11 +1,12 @@
 # Backup all in-use volumes in all regions
-# Detailed instructions available on https://medium.com/nerd-for-tech/ebs-snapshot-management-using-aws-lambda-and-cloudwatch-d961fdbe3772
+# Detailed instructions available on 
+#https://medium.com/@codebyamir/automate-ebs-snapshots-using-aws-lambda-cloudwatch-1e2acfb0a45a#:~:text=In%20the%20Lambda%20console%2C%20go%20to%20Functions%20%3E,all%20regions%20import%20boto3%20def%20lambda_handler%20%28event%2C%20context%29%3A
 import boto3
 def lambda_handler(event, context):
     ec2 = boto3.client('ec2')
     
-    # Get all in-use volumes in all regions 
-    result = ec2.describe_volumes( Filters=[{'Name': 'status', 'Values': ['in-use']}])
+    # Get all in-use volumes in all regions
+    result = ec2.describe_volumes( Filters=[{'Name': 'status', 'Values': ['in-use']}, {'Name': 'tag:Backup', 'Values': ['15-days']}])
     report = {}
     for volume in result['Volumes']:
         try:
@@ -17,7 +18,7 @@ def lambda_handler(event, context):
             # Get snapshot resource
             ec2resource = boto3.resource('ec2')
             snapshot = ec2resource.Snapshot(result['SnapshotId'])
-            
+                        
             # Find name tag for volume
             if 'Tags' in volume:
                 for tags in volume['Tags']:
@@ -25,9 +26,18 @@ def lambda_handler(event, context):
                         volumename = tags["Value"]
             else:
                 volumename = 'N/A'
-                
+
+            #wait for snapshot to complete
+            while snapshot.state == 'pending':
+            print(f{volumename}: {snapshot.state} )
+            time.sleep(1)
+            snapshot.reload()
+
+            if snapshot.state == 'completed':
+
             # Add volume name to snapshot for easier identification
             snapshot.create_tags(Tags=[{'Key': 'Name','Value': volumename}])
+
             report[volumename]='SUCCESS'
         except Exception as e: 
             report[volumename]='FAILED'
