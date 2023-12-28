@@ -13,16 +13,14 @@ def lambda_handler(event, context):
     result = ec2.describe_volumes( Filters=[{'Name': 'status', 'Values': ['in-use']}, {'Name': 'tag-key', 'Values': ['Backup']}])
     report = {}
     for volume in result['Volumes']:
-        try:
-            volume_id = volume['VolumeId']
-            # Find name tag for volume
-            if 'Tags' in volume:
-                for tags in volume['Tags']:
-                    if tags["Key"] == 'Name':
-                        volume_name = tags["Value"]
-            else:
-                volume_name = volume['VolumeId']
-                 
+        volume_id = volume['VolumeId']
+        volume_name = volume['VolumeId']
+        # Find name tag for volume
+        if 'Tags' in volume:
+            for tags in volume['Tags']:
+                if tags["Key"] == 'Name':
+                    volume_name = tags["Value"]
+        try:                        
             if 'Tags' in volume:
                 for tags in volume['Tags']:
                     if tags["Key"] == 'Backup':
