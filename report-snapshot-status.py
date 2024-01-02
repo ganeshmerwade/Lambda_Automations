@@ -14,21 +14,21 @@ def get_snapshot_name(snapshot_obj):
                         ss_name = tags["Value"]
     return ss_name 
 
-def update_report(snapshot_obj, ec2resource_obj, report_dict):
+def update_report(snapshot_obj, ec2resource_obj, report_dict, ss_name):
     try:         
         # Get snapshot resource
         snap = ec2resource_obj.snapshot_obj(snapshot_obj['SnapshotId'])
                     
         if snap.state == 'pending':
-            print(f"{snapshot_name}: {snap.state}")
-            report_dict[snapshot_name]='PENDING'
+            print(f"{ss_name}: {snap.state}")
+            report_dict[ss_name]='PENDING'
         elif snap.state == 'completed':
-            report_dict[snapshot_name]='SUCCESS'
+            report_dict[ss_name]='SUCCESS'
         else:
-            report_dict[snapshot_name]='FAILED'
+            report_dict[ss_name]='FAILED'
     except Exception as e: 
-    report_dict[snapshot_name]='FAILED'
-    print(f"{snapshot_name}")
+    report_dict[ss_name]='FAILED'
+    print(f"{ss_name}")
     print(e)
     traceback.print_exc()
     
@@ -43,7 +43,7 @@ def lambda_handler(event, context):
     report = {}
     for Snapshot in result['Snapshots']:
         snapshot_name = get_snapshot_name(Snapshot)
-        report = update_report(snapshot, ec2resource, report)
+        report = update_report(snapshot, ec2resource, report, snapshot_name)
         
 
     for key,value in report.items():
