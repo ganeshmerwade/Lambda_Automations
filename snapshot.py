@@ -24,7 +24,7 @@ def get_backup_frequency_value(volume_obj):
                 frequency = tags["Value"]
     return frequency
 
-def time_difference(snapshot_obj)
+def time_difference(snapshot_obj):
     time_difference = datetime.now() - snapshot_obj.start_time.replace(tzinfo=None)
     days_difference_to_last_snap = time_difference.days
     return days_difference_to_last_snap
