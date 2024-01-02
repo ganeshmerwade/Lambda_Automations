@@ -3,7 +3,6 @@
 
 import boto3
 import traceback
-import time
 
 def get_snapshot_name(snapshot_obj):
     ss_name = snapshot_obj['SnapshotId']
