@@ -24,6 +24,11 @@ def get_backup_frequency_value(volume_obj):
                 frequency = tags["Value"]
     return frequency
 
+def time_difference(snapshot_obj)
+    time_difference = datetime.now() - snapshot_obj.start_time.replace(tzinfo=None)
+    days_difference_to_last_snap = time_difference.days
+    return days_difference_to_last_snap
+
 def create_snapshot(volume_obj, ec2client_obj, ec2resource_obj, vol_name,  report_dict):
     try:                             
         backup_frequency = get_backup_frequency_value(volume_obj)        
@@ -34,8 +39,7 @@ def create_snapshot(volume_obj, ec2client_obj, ec2resource_obj, vol_name,  repor
         
         if sorted_response:
             snapshot = ec2resource_obj.Snapshot(sorted_response[0]['SnapshotId'])
-            time_difference = datetime.now() - snapshot.start_time.replace(tzinfo=None)
-            days_difference = time_difference.days
+            days_difference = time_difference(snapshot)
             
             if days_difference > int(backup_frequency):
                 result = ec2client_obj.create_snapshot(VolumeId=volume['VolumeId'],Description='Created by Lambda backup function ebs-snapshots')
