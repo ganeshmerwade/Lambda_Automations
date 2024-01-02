@@ -24,61 +24,68 @@ def get_backup_frequency_value(volume_obj):
                 frequency = tags["Value"]
     return frequency
 
-def find_latest_snapshot(ec2client_obj, volume_obj):
-    response = ec2client_obj.describe_snapshots(Filters=[{'Name': 'volume-id', 'Values': [volume_obj['VolumeId']]}])
-    sorted_response = sorted(response['Snapshots'], key=lambda x: x['StartTime'], reverse=True)
-
-    return sorted_response
-
 def create_snapshot(volume_obj, ec2client_obj, ec2resource_obj, vol_name,  report_dict):
     try:                             
-            backup_frequency = get_backup_frequency_value(volume_obj)        
+        backup_frequency = get_backup_frequency_value(volume_obj)        
+        
+        # Find last snaphot for the volume        
+        response = ec2client_obj.describe_snapshots(Filters=[{'Name': 'volume-id', 'Values': [volume_obj['VolumeId']]}])
+        sorted_response = sorted(response['Snapshots'], key=lambda x: x['StartTime'], reverse=True)
+        
+        if sorted_response:
+            snapshot = ec2resource_obj.Snapshot(sorted_response[0]['SnapshotId'])
+            time_difference = datetime.now() - snapshot.start_time.replace(tzinfo=None)
+            days_difference = time_difference.days
             
-            latest_snapshot = find_latest_snapshot(ec2client_obj, volume_obj)            
-            if latest_snapshot:
-                snapshot = ec2resource_obj.Snapshot(latest_snapshot[0]['SnapshotId'])
-                time_difference = datetime.now() - snapshot.start_time.replace(tzinfo=None)
-                days_difference = time_difference.days
+            if days_difference > int(backup_frequency):
+                result = ec2client_obj.create_snapshot(VolumeId=volume['VolumeId'],Description='Created by Lambda backup function ebs-snapshots')
+                snap = ec2resource_obj.Snapshot(result['SnapshotId'])
                 
-                if days_difference > int(frequency):
-                    result = ec2client_obj.create_snapshot(VolumeId=volume['VolumeId'],Description='Created by Lambda backup function ebs-snapshots')
-                    snap = ec2resource.Snapshot(result['SnapshotId'])
-                    
-                    # Add volume name to snapshot for easier identification
-                    snap.create_tags(Tags=[{'Key': 'Name','Value': volume_name}])
-                    
-                    #add retention period in tags
-                    retention_period = int(frequency) + 1
-
-                    snap.create_tags(Tags=[{'Key': 'RetentionTime','Value': str(retention_period)}])
-                    report[volume_name]='SUCCESS'
-                else:
-                    print(f"snapshot for {volume_name} is created {days_difference} days ago")    
-            else:         
-            
-                print(f"Backing up {volume['VolumeId']} in {volume['AvailabilityZone']} for first time")
-            
-                # Create snapshot
-                result = ec2.create_snapshot(VolumeId=volume['VolumeId'],Description='Created by Lambda backup function ebs-snapshots')
-            
-                # Get snapshot resource
-                snapshot = ec2resource.Snapshot(result['SnapshotId'])
-                            
                 # Add volume name to snapshot for easier identification
-                snapshot.create_tags(Tags=[{'Key': 'Name','Value': volume_name}])
-
+                snap.create_tags(Tags=[{'Key': 'Name','Value': vol_name}])
+                
                 #add retention period in tags
-                retention_period = int(frequency) + 1
+                retention_period = int(backup_frequency) + 1
 
-                snapshot.create_tags(Tags=[{'Key': 'RetentionTime','Value': str(retention_period)}])
+                snap.create_tags(Tags=[{'Key': 'RetentionTime','Value': str(retention_period)}])
+                report_dict[vol_name]='SUCCESS'
+            else:
+                print(f"snapshot for {vol_name} is created {days_difference} days ago")    
+        else:         
+        
+            print(f"Backing up {volume_obj['VolumeId']} in {volume_obj['AvailabilityZone']} for first time")
+        
+            # Create snapshot
+            result = ec2client_obj.create_snapshot(VolumeId=volume_obj['VolumeId'],Description='Created by Lambda backup function ebs-snapshots')
+        
+            # Get snapshot resource
+            snapshot = ec2resource_obj.Snapshot(result['SnapshotId'])
+                        
+            # Add volume name to snapshot for easier identification
+            snapshot.create_tags(Tags=[{'Key': 'Name','Value': vol_name}])
 
-                report[volume_name]='SUCCESS'
+            #add retention period in tags
+            retention_period = int(backup_frequency) + 1
 
-        except Exception as e: 
-            report[volume_name]='FAILED'
-            print(f"{volume_name}")
-            print(e)
-            traceback.print_exc()
+            snapshot.create_tags(Tags=[{'Key': 'RetentionTime','Value': str(retention_period)}])
+
+            report_dict[vol_name]='SUCCESS'
+
+    except Exception as e: 
+        report_dict[vol_name]='FAILED'
+        print(f"{vol_name}")
+        print(e)
+        traceback.print_exc()
+
+    return report_dict
+
+def print_report(report_dict):
+    """
+    print_report functions prints the final report dictionary with snapshot name and its status
+    """
+    for key,value in report_dict.items():
+        print(f"{key}: {value}")
+
 
 def lambda_handler(event, context):
     ec2_client = boto3.client('ec2')
@@ -88,9 +95,7 @@ def lambda_handler(event, context):
     result = ec2_client.describe_volumes( Filters=[{'Name': 'status', 'Values': ['in-use']}, {'Name': 'tag-key', 'Values': ['Backup']}])
     report = {}
     for volume_data in result['Volumes']: 
-        get_volume_name =  get_volume_name(volume_data)
+        volume_name =  get_volume_name(volume_data)
+        report = create_snapshot(volume_data, ec2_client, ec2_resource, volume_name,  report)
 
-        
-
-    for key,value in report.items():
-        print(f"{key}: {value}")
+    print_report(report)
