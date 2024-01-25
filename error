@@ -1,0 +1,9 @@
+START RequestId: b69d1f22-6c17-4cca-8414-60b9061156f0 Version: $LATEST
+snapshot for vpc-shared-vault-root is created 0 days ago
+vpc-rd-consul-rd-root
+not enough values to unpack (expected 3, got 2)
+Traceback (most recent call last):
+File "/var/task/lambda_function.py", line 77, in create_snapshot
+should_create, status, days_difference = is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj)
+ValueError: not enough values to unpack (expected 3, got 2)
+vpc-rd-consul-rd-root: FAILED
