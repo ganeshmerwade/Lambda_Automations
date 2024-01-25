@@ -1,185 +1,115 @@
-# Backup all in-use volumes in all regions
-# Detailed instructions available on 
-#https://medium.com/@codebyamir/automate-ebs-snapshots-using-aws-lambda-cloudwatch-1e2acfb0a45a#:~:text=In%20the%20Lambda%20console%2C%20go%20to%20Functions%20%3E,all%20regions%20import%20boto3%20def%20lambda_handler%20%28event%2C%20context%29%3A
-
-Jean-Jay Vester
-Jean-Jay Vester
-5 days ago
-This is a good start with regard to documentation comments but if we could go a bit further in explaining also what it does eg:
-
- 
-
-
-# This script will create a snapshot of volumes that match a certain filter based on tags which match [PUT TAGS HERE]
-# Creating the snapshot is determined based on a frequency tag and the date of the last snapshot in AWS.
+# This script will create a snapshot of volumes that match a certain filter based on tags which match [Backup]
+# Creating the snapshot is determined based on a Backup tag (provided for volumes through terraform) and the date of the last snapshot in AWS.
 # This scipt requires python 3.x 
-
 # Additional information: https://medium.com/@codebyamir/automate-ebs-snapshots-using-aws-lambda-cloudwatch-1e2acfb0a45a#:~:text=In%20the%20Lambda%20console%2C%20go%20to%20Functions%20%3E,all%20regions%20import%20boto3%20def%20lambda_handler%20%28event%2C%20context%29%3A
- 
 
-
-Reply
-
-Resolve
-
-Like
-
-Create task
-
-Create Jira issue
 import boto3
 import traceback
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
+
+# get_volume_name function extracts name tag associated with volume.
+# if there is no name tag avilable Volume id will be returned as Volume name
+def get_volume_name(volume_obj):
+    vol_name = volume_obj['VolumeId']
+    if 'Tags' in volume_obj:
+            for tags in volume_obj['Tags']:
+                if tags["Key"] == 'Name':
+                    vol_name = tags["Value"]
+    return vol_name                
+
+# get_backup_frequency_value function extracts value of tag Backup (which shall be provided through terraform) and feed the value to variable frequency
+def get_backup_frequency_value(volume_obj):
+    if 'Tags' in volume_obj:
+        for tags in volume_obj['Tags']:
+            if tags["Key"] == 'Backup':
+                frequency = tags["Value"]
+    return frequency
+
+# time_difference function will estimate the difference in days between current time and start time of the last snapshot created for voulmeId under consideration
+def time_difference(snapshot_obj):
+    time_difference = datetime.now() - snapshot_obj.start_time.replace(tzinfo=None)
+    days_difference_to_last_snap = time_difference.days
+    return days_difference_to_last_snap
+
+# get_sorted_snapshots function list all the previous snapshots of volume under consideration and sort them in descending order wrt start time
+def get_sorted_snapshots(ec2client_obj,volume_obj):
+    response = ec2client_obj.describe_snapshots(Filters=[{'Name': 'volume-id', 'Values': [volume_obj['VolumeId']]}])
+    sorted_response = sorted(response['Snapshots'], key=lambda x: x['StartTime'], reverse=True)
+    return sorted_response
+
+# calculate_retention_period function returns retention period value for the snapshot (bacup frequency + 1 day)
+def calculate_retention_period(volume_obj):
+    calculated_retention_period = int(get_backup_frequency_value(volume_obj)) + 1
+    return calculated_retention_period
+
+# initiate_snapshot function creates snapshot and assigns tags (name and retention_period)
+def initiate_snapshot(ec2client_obj, ec2resource_obj, vol_name, volume_obj):
+    result = ec2client_obj.create_snapshot(VolumeId=volume_obj['VolumeId'],Description='Created by Lambda backup function ebs-snapshots')
+    snap = ec2resource_obj.Snapshot(result['SnapshotId'])
+    
+    # Add volume name to snapshot for easier identification
+    snap.create_tags(Tags=[{'Key': 'Name','Value': vol_name}])
+    
+    #add retention period in tags
+    retention_period = calculate_retention_period(volume_obj)
+    snap.create_tags(Tags=[{'Key': 'RetentionTime','Value': str(retention_period)}])
+
+def update_report(report_dict, vol_name, status):
+    report_dict[vol_name] = status
+
+def is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj):
+    backup_frequency = get_backup_frequency_value(volume_obj)
+    sorted_snapshots = get_sorted_snapshots(ec2client_obj, volume_obj)
+
+    if sorted_snapshots:
+        days_difference = time_difference(ec2resource_obj.Snapshot(sorted_snapshots[0]['SnapshotId']))
+        if days_difference > int(backup_frequency):
+            return True, "previously present", days_difference
+        else:
+            return False, "previously present", days_difference
+    else:
+        return True, "first time"
+
+# if days_difference to last snap is greater that the frequency value function will create snapshot else it will return message with volume name and when was it created
+# if there are no previous snapshot for volume id under consideration function will create a snapshot for first time
+def create_snapshot(volume_obj, ec2client_obj, ec2resource_obj, vol_name, report_dict):
+    try:                             
+        should_create, status, days_difference = is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj)
+        
+        if should_create:
+            if status == "first time":
+                print(f"Backing up {volume_obj['VolumeId']} in {volume_obj['AvailabilityZone']} for first time")   
+            
+            initiate_snapshot(ec2client_obj, ec2resource_obj, vol_name, volume_obj)
+            update_report(report_dict, vol_name, 'SUCCESS')
+        else:
+            print(f"snapshot for {vol_name} is created {days_difference} days ago")
+            
+    except Exception as e: 
+        update_report(report_dict, vol_name, 'FAILED')
+        print(f"{vol_name}")
+        print(e)
+        traceback.print_exc()
+
+    return report_dict
+
+
+# print_report functions prints the final report dictionary with snapshot name and its status
+def print_report(report_dict):
+    for key,value in report_dict.items():
+        print(f"{key}: {value}")
+
+
 def lambda_handler(event, context):
-    ec2 = boto3.client('ec2')
-    ec2resource = boto3.resource('ec2')
+    ec2_client = boto3.client('ec2')
+    ec2_resource = boto3.resource('ec2')
     
     # Get all in-use volumes in all regions
-    result = ec2.describe_volumes( Filters=[{'Name': 'status', 'Values': ['in-use']}, {'Name': 'tag-key', 'Values': ['Backup']}])
+    result = ec2_client.describe_volumes( Filters=[{'Name': 'status', 'Values': ['in-use']}, {'Name': 'tag-key', 'Values': ['Backup']}])
     report = {}
-    for volume in result['Volumes']: 
-        volume_id = volume['VolumeId']
-        volume_name = volume['VolumeId']
-        if 'Tags' in volume:
-                for tags in volume['Tags']:
-                    if tags["Key"] == 'Name':
-                        volume_name = tags["Value"]
+    for volume_data in result['Volumes']: 
+        volume_name =  get_volume_name(volume_data)
+        report = create_snapshot(volume_data, ec2_client, ec2_resource, volume_name, report)
 
-Jean-Jay Vester
-Jean-Jay Vester
-5 days ago
-Put this in a separate function
+    print_report(report)
 
-
-Reply
-
-Resolve
-
-Like
-
-Create task
-
-Create Jira issue
-        try:                             
-            if 'Tags' in volume:
-                for tags in volume['Tags']:
-                    if tags["Key"] == 'Backup':
-                        frequency = tags["Value"]    
-
-Jean-Jay Vester
-Jean-Jay Vester
-5 days ago
-same separate function
-
-
-Reply
-
-Resolve
-
-Like
-
-Create task
-
-Create Jira issue
-            
-            # Find last snaphot for the volume        
-            response = ec2.describe_snapshots(Filters=[{'Name': 'volume-id', 'Values': [volume_id]}])
-            sorted_response = sorted(response['Snapshots'], key=lambda x: x['StartTime'], reverse=True)
-
-Jean-Jay Vester
-Jean-Jay Vester
-5 days ago
-Extract these two variables into a function which returns an optional containing the most recent snapshot or None, then base the subsequent logic on where the Optional is empty or not
-
-
-Reply
-
-Resolve
-
-Like
-
-Create task
-
-Create Jira issue
-            
-            if sorted_response:
-                # latest_snapshot_id = sorted_response[0]['SnapshotId']
-                snapshot = ec2resource.Snapshot(sorted_response[0]['SnapshotId'])
-                time_difference = datetime.now() - snapshot.start_time.replace(tzinfo=None)
-                days_difference = time_difference.days
-                
-                if days_difference > int(frequency):
-
-Jean-Jay Vester
-Jean-Jay Vester
-5 days ago
-Put the logic to check the delta between days_diff and int(frequency) into a function that indicates if we must create a snapshot.
-
-eg: if is_snapshot_required(snapshot, frequency)
-
-
-Reply
-
-Resolve
-
-Like
-
-Create task
-
-Create Jira issue
-                    result = ec2.create_snapshot(VolumeId=volume['VolumeId'],Description='Created by Lambda backup function ebs-snapshots')
-                    snap = ec2resource.Snapshot(result['SnapshotId'])
-                    
-                    # Add volume name to snapshot for easier identification
-                    snap.create_tags(Tags=[{'Key': 'Name','Value': volume_name}])
-                    
-                    #add retention period in tags
-                    retention_period = int(frequency) + 1
-                    snap.create_tags(Tags=[{'Key': 'RetentionTime','Value': str(retention_period)}])
-                    report[volume_name]='SUCCESS'
-                else:
-                    print(f"snapshot for {volume_name} is created {days_difference} days ago")    
-            else:         
-            
-                print(f"Backing up {volume['VolumeId']} in {volume['AvailabilityZone']} for first time")
-
-Jean-Jay Vester
-Jean-Jay Vester
-5 days ago
-Put all the code required to create the snapshot into a function called
-
-
-create_snapshot(report)
- 
-
-
-Reply
-
-Resolve
-
-Like
-
-Create task
-
-Create Jira issue
-            
-                # Create snapshot
-                result = ec2.create_snapshot(VolumeId=volume['VolumeId'],Description='Created by Lambda backup function ebs-snapshots')
-            
-                # Get snapshot resource
-                snapshot = ec2resource.Snapshot(result['SnapshotId'])
-                            
-                # Add volume name to snapshot for easier identification
-                snapshot.create_tags(Tags=[{'Key': 'Name','Value': volume_name}])
-                #add retention period in tags
-                retention_period = int(frequency) + 1
-                snapshot.create_tags(Tags=[{'Key': 'RetentionTime','Value': str(retention_period)}])
-                report[volume_name]='SUCCESS'
-        except Exception as e: 
-            report[volume_name]='FAILED'
-            print(f"{volume_name}")
-            print(e)
-            traceback.print_exc()
-    for key,value in report.items():
-        print(f"{key}: {value}")
