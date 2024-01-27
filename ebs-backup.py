@@ -13,16 +13,16 @@ def get_volume_name(volume_obj):
     vol_name = volume_obj['VolumeId']
     if 'Tags' in volume_obj:
             for tags in volume_obj['Tags']:
-                if tags["Key"] == 'Name':
-                    vol_name = tags["Value"]
+                if tags['Key'] == 'Name':
+                    vol_name = tags['Value']
     return vol_name                
 
 # get_backup_frequency_value function extracts value of tag Backup (which shall be provided through terraform) and feed the value to variable frequency
 def get_backup_frequency_value(volume_obj):
     if 'Tags' in volume_obj:
         for tags in volume_obj['Tags']:
-            if tags["Key"] == 'Backup':
-                frequency = tags["Value"]
+            if tags['Key'] == 'Backup':
+                frequency = tags['Value']
     return frequency
 
 # time_difference function will estimate the difference in days between current time and start time of the last snapshot created for voulmeId under consideration
@@ -54,9 +54,14 @@ def initiate_snapshot(ec2client_obj, ec2resource_obj, vol_name, volume_obj):
     retention_period = calculate_retention_period(volume_obj)
     snap.create_tags(Tags=[{'Key': 'RetentionTime','Value': str(retention_period)}])
 
+    #add creator tag
+    snap.create_tags(Tags=[{'Key': 'CreatedBy','Value': 'ebsBackupLambdaFunction'}])
+
 def update_report(report_dict, vol_name, status):
     report_dict[vol_name] = status
 
+# Returns True if days since the last snapshot for the volume exceed the backup frequency.
+# If there are no previous snapshots, returns True for the first-time snapshot creation.
 def is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj):
     backup_frequency = get_backup_frequency_value(volume_obj)
     sorted_snapshots = get_sorted_snapshots(ec2client_obj, volume_obj)
@@ -64,30 +69,33 @@ def is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj):
     if sorted_snapshots:
         days_difference = time_difference(ec2resource_obj.Snapshot(sorted_snapshots[0]['SnapshotId']))
         if days_difference > int(backup_frequency):
-            return True, "previously present", days_difference
+            return True, 'previously present', days_difference
         else:
-            return False, "previously present", days_difference
+            return False, 'previously present', days_difference
     else:
-        return True, "first time"
+        return True, 'first time' , 0
 
-# if days_difference to last snap is greater that the frequency value function will create snapshot else it will return message with volume name and when was it created
-# if there are no previous snapshot for volume id under consideration function will create a snapshot for first time
-def create_snapshot(volume_obj, ec2client_obj, ec2resource_obj, vol_name, report_dict):
-    try:                             
+# creates snapshots and updates report
+def create_snapshot(volume_obj, ec2client_obj, ec2resource_obj, report_dict):
+    try:
+        vol_name = get_volume_name(volume_obj)                             
         should_create, status, days_difference = is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj)
         
         if should_create:
-            if status == "first time":
-                print(f"Backing up {volume_obj['VolumeId']} in {volume_obj['AvailabilityZone']} for first time")   
+            if status == 'first time':
+                print(f"Backing up {vol_name} for first time")   
             
             initiate_snapshot(ec2client_obj, ec2resource_obj, vol_name, volume_obj)
             update_report(report_dict, vol_name, 'SUCCESS')
         else:
             print(f"snapshot for {vol_name} is created {days_difference} days ago")
             
+    except ValueError as ve:
+        update_report(report_dict, volume_obj['VolumeId'], f'FAILED: {ve}')
+        print(ve)
     except Exception as e: 
         update_report(report_dict, vol_name, 'FAILED')
-        print(f"{vol_name}")
+        print(f'{vol_name}')
         print(e)
         traceback.print_exc()
 
@@ -97,7 +105,7 @@ def create_snapshot(volume_obj, ec2client_obj, ec2resource_obj, vol_name, report
 # print_report functions prints the final report dictionary with snapshot name and its status
 def print_report(report_dict):
     for key,value in report_dict.items():
-        print(f"{key}: {value}")
+        print(f'{key}: {value}')
 
 
 def lambda_handler(event, context):
@@ -108,8 +116,7 @@ def lambda_handler(event, context):
     result = ec2_client.describe_volumes( Filters=[{'Name': 'status', 'Values': ['in-use']}, {'Name': 'tag-key', 'Values': ['Backup']}])
     report = {}
     for volume_data in result['Volumes']: 
-        volume_name =  get_volume_name(volume_data)
-        report = create_snapshot(volume_data, ec2_client, ec2_resource, volume_name, report)
+        report = create_snapshot(volume_data, ec2_client, ec2_resource, report)
 
     print_report(report)
 
