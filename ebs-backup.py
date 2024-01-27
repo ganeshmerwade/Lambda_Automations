@@ -10,7 +10,7 @@ from datetime import datetime
 # get_volume_name function extracts name tag associated with volume.
 # if there is no name tag avilable Volume id will be returned as Volume name
 def get_volume_name(volume_obj):
-    vol_name = volume_obj['VolumeId']
+    vol_name = ""
     if 'Tags' in volume_obj:
             for tags in volume_obj['Tags']:
                 if tags['Key'] == 'Name':
@@ -78,21 +78,21 @@ def is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj):
 # creates snapshots and updates report
 def create_snapshot(volume_obj, ec2client_obj, ec2resource_obj, report_dict):
     try:
-        vol_name = get_volume_name(volume_obj)                             
-        should_create, status, days_difference = is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj)
-        
-        if should_create:
-            if status == 'first time':
-                print(f"Backing up {vol_name} for first time")   
+        vol_name = get_volume_name(volume_obj)
+        if vol_name 
+            should_create, status, days_difference = is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj)
             
-            initiate_snapshot(ec2client_obj, ec2resource_obj, vol_name, volume_obj)
-            update_report(report_dict, vol_name, 'SUCCESS')
+            if should_create:
+                if status == 'first time':
+                    print(f"Backing up {vol_name} for first time")   
+                
+                initiate_snapshot(ec2client_obj, ec2resource_obj, vol_name, volume_obj)
+                update_report(report_dict, vol_name, 'SUCCESS')
+            else:
+                print(f"snapshot for {vol_name} is created {days_difference} days ago")
+            
         else:
-            print(f"snapshot for {vol_name} is created {days_difference} days ago")
-            
-    except ValueError as ve:
-        update_report(report_dict, volume_obj['VolumeId'], f'FAILED: {ve}')
-        print(ve)
+            update_report(report_dict, volume_obj['VolumeId'], f'FAILED: name tag unavailable')
     except Exception as e: 
         update_report(report_dict, vol_name, 'FAILED')
         print(f'{vol_name}')
