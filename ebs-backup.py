@@ -79,7 +79,7 @@ def is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj):
 def create_snapshot(volume_obj, ec2client_obj, ec2resource_obj, report_dict):
     try:
         vol_name = get_volume_name(volume_obj)
-        if vol_name 
+        if vol_name: 
             should_create, status, days_difference = is_snapshot_needed(volume_obj, ec2client_obj, ec2resource_obj)
             
             if should_create:
